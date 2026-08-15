@@ -84,7 +84,7 @@ def find_teachers(term):
     print(f"\n--- Finding Teachers matching '{term}' ---")
     results = []
     
-    # Loop through teacher_db. Check both name AND speciality.
+    # Loop through teacher_db. Check both name and speciality.
     for teacher in teacher_db:
         if term.lower() in teacher.name.lower() or term.lower() in teacher.speciality.lower():
             results.append(teacher)

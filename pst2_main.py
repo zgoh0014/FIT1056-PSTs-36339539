@@ -36,3 +36,42 @@ def save_data(path=DATA_FILE):
     with open(path, 'w') as f:
         json.dump(app_data, f, indent=4)
     print("Data saved successfully.")
+
+# --- Full CRUD for Core Data ---
+# Note: We are now working with lists of dictionaries, not lists of objects.
+
+def add_teacher(name, speciality):
+    """Adds a teacher dictionary to the data store."""
+    teacher_id = app_data['next_teacher_id']
+    new_teacher = {"id": teacher_id, "name": name, "speciality": speciality}
+    app_data['teachers'].append(new_teacher)
+    app_data['next_teacher_id'] += 1
+    print(f"Core: Teacher '{name}' added.")
+
+def update_teacher(teacher_id, **fields):
+    """Finds a teacher by ID and updates their data with provided fields."""
+    for teacher in app_data['teachers']:
+        if teacher['id'] == teacher_id:
+            teacher.update(fields)
+            print(f"Teacher {teacher_id} updated.")
+            return
+    print(f"Error: Teacher with ID {teacher_id} not found.")
+
+def remove_student(student_id):
+    """Removes a student from the data store."""
+    app_data['students'] = [s for s in app_data['students'] if s['id'] != student_id]
+    print(f"Student {student_id} removed.")
+
+def remove_teacher(teacher_id):
+    """Removes a teacher from the data store."""
+    app_data['teachers'] = [t for t in app_data['teachers'] if t['id'] != teacher_id]
+    print(f"Teacher {teacher_id} removed.")
+
+def update_student(student_id, **fields):
+    """Finds a student by ID and updates their data with provided fields."""
+    for student in app_data['students']:
+        if student['id'] == student_id:
+            student.update(fields)
+            print(f"Student {student_id} updated.")
+            return
+    print(f"Error: Student with ID {student_id} not found.")
