@@ -75,3 +75,37 @@ def update_student(student_id, **fields):
             print(f"Student {student_id} updated.")
             return
     print(f"Error: Student with ID {student_id} not found.")
+# --- New Receptionist Features ---
+def check_in(student_id, course_id, timestamp=None):
+    """Records a student's attendance for a course."""
+    if timestamp is None:
+        timestamp = datetime.datetime.now().isoformat()
+
+    check_in_record = {
+        "student_id": student_id,
+        "course_id": course_id,
+        "timestamp": timestamp
+    }
+    app_data['attendance'].append(check_in_record)
+    print(f"Receptionist: Student {student_id} checked into {course_id}.")
+
+def print_student_card(student_id):
+    """Creates a text file badge for a student."""
+    student_to_print = None
+    for s in app_data['students']:
+        if s['id'] == student_id:
+            student_to_print = s
+            break
+
+    if student_to_print:
+        filename = f"{student_id}_card.txt"
+        with open(filename, 'w') as f:
+            f.write("========================\n")
+            f.write(f"  MUSIC SCHOOL ID BADGE\n")
+            f.write("========================\n")
+            f.write(f"ID: {student_to_print['id']}\n")
+            f.write(f"Name: {student_to_print['name']}\n")
+            f.write(f"Enrolled In: {', '.join(student_to_print.get('enrolled_in', []))}\n")
+        print(f"Printed student card to {filename}.")
+    else:
+        print(f"Error: Could not print card, student {student_id} not found.")
