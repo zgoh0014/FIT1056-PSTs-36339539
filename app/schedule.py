@@ -363,6 +363,35 @@ class ScheduleManager:
         return True
 
     # ------------------------------------------------------------------
+    # Core business logic (Fragment 3.3)
+    # ------------------------------------------------------------------
+
+    def check_in(self, student_id, course_id):
+        """Records a student's attendance for a course after validation."""
+        student = self.find_student_by_id(student_id)
+        course = self.find_course_by_id(course_id)
+
+        if not student or not course:
+            print("Error: Check-in failed. Invalid Student or Course ID.")
+            return False
+
+        # Not a hard error - the front desk may still want to record a visitor
+        # sitting in on a class - but worth flagging to the receptionist.
+        if course_id not in student.enrolled_course_ids:
+            print(f"Warning: {student.name} is not enrolled in '{course.name}'.")
+
+        timestamp = datetime.datetime.now().isoformat()
+        check_in_record = {
+            "student_id": student_id,
+            "course_id": course_id,
+            "timestamp": timestamp,
+        }
+        self.attendance_log.append(check_in_record)
+        self._save_data()
+        print(f"Success: Student {student.name} checked into {course.name}.")
+        return True
+
+    # ------------------------------------------------------------------
     # Read-only queries - these return data for main.py to format and print
     # ------------------------------------------------------------------
 
