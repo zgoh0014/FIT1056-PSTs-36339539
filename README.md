@@ -1,6 +1,6 @@
 # Music School Management System (MSMS) - Phase 1 Prototype
 
-**Author:** Goh Zheng Qiangit add README.md
+**Author:** Goh Zheng Qian
 
 ## Project Overview
 This project is an in-memory Python prototype of a Music School Management System (MSMS). It allows a receptionist to register new students, enrol them in instrument classes, and look up information about students and teachers. Since this is an in-memory prototype, all data is reset when the program terminates.
@@ -205,3 +205,141 @@ an error message and return to the menu instead of crashing.
 - **New in PST3:** `data/msms.json` is the first data file committed to the
   repo, so the program has sample students, teachers, courses and lessons to
   demonstrate with. PST2 generated its `msms.json` at runtime.
+
+
+## PST4: The Modern User Experience (GUI)
+
+### Overview
+PST4 solves the "Clunky & Unfriendly" problem of the PST3 text console, where
+the receptionist had to remember menu numbers and type raw IDs. The console is
+replaced by a **Streamlit** web GUI with a sidebar menu, search boxes, forms,
+dropdowns and tables.
+
+Because PST3 already separated the layers, the GUI is simply a **new View**.
+It sits on top of the same `ScheduleManager`, so the models and the data file
+did not change. The controller only gained four methods the new screens
+needed (listed below).
+
+| Layer | Files | Change in PST4 |
+| --- | --- | --- |
+| **Model** | `app/user.py`, `app/student.py`, `app/teacher.py` | None |
+| **Controller** | `app/schedule.py` | Added `register_new_student`, `find_teacher_for_instrument`, `search_students`, `get_attendance_for_date` |
+| **View** | `gui/` (new), `main.py` | Console menu replaced by Streamlit pages; `main.py` is now only a launcher |
+
+### Project Structure
+```
+FIT1056-PSTs-36339539/
+├── main.py                 # Launcher only - starts the GUI
+├── requirements.txt        # streamlit, pandas
+├── gui/                    # NEW: the View layer
+│   ├── __init__.py
+│   ├── main_dashboard.py   # launch(): page setup, session state, sidebar navigation
+│   ├── student_pages.py    # Student Management page (search + registration)
+│   └── roster_pages.py     # Daily Roster page (timetable + check-in + today's log)
+├── app/                    # Model + Controller (from PST3)
+│   ├── user.py, student.py, teacher.py
+│   └── schedule.py         # ScheduleManager
+├── data/
+│   └── msms.json
+└── PST2/ ... PST4/         # Brief, rubric and templates for each stage
+```
+
+### What Each Part Does
+
+**Fragment 4.1: Launcher & Main Dashboard (`main.py`, `gui/main_dashboard.py`)**
+- `main.py` does one thing: call `launch()`. If it is started with plain
+  `python main.py` instead of `streamlit run main.py`, it starts the Streamlit
+  server itself rather than printing a page of warnings.
+- `launch()` sets the page layout and builds **one** `ScheduleManager`, stored in
+  `st.session_state`. Streamlit re-runs the whole script on every click, and
+  session state is what stops the manager (and the JSON file read) from being
+  recreated each time.
+- The sidebar holds the page menu (Student Management, Daily Roster,
+  Payments stub) and a small "school at a glance" panel with student, teacher
+  and course counts.
+
+**Fragment 4.2: Student Management (`gui/student_pages.py`)**
+- **Find a Student**: a search box that matches partial names (case-insensitive)
+  or an exact student ID. Results show in a table with each student's courses
+  and number of check-ins. A blank search lists every student.
+- **Register New Student**: name + first instrument. Submitting calls
+  `manager.register_new_student(name, instrument)`, which:
+  1. checks a teacher exists whose speciality matches the instrument
+     (`"piano"`, `"Piano"` and `" PIANO "` all match),
+  2. picks the entry-level course for that instrument (lowest course ID,
+     e.g. 101 Beginner Piano rather than 103 Intermediate Piano),
+  3. only then creates the student and enrols them.
+
+  If no teacher teaches that instrument, nothing is created and the form shows an
+  error. If a teacher exists but no course has been set up yet, a
+  "Beginner <Instrument>" course is opened with that teacher.
+- After a successful registration the page reloads with a success message, so
+  the new student shows up in the search table straight away.
+
+**Fragment 4.3: Daily Roster & Check-in (`gui/roster_pages.py`)**
+- **Daily Roster**: choose a day (it opens on today's weekday) to see that day's
+  lessons sorted by time, with course, instrument, teacher, room and class size,
+  plus "lessons today" and "students expected" totals.
+- **Student Check-in**: choose a student, then one of *their* courses, then press
+  **Check-in Student**, which calls `manager.check_in(student_id, course_id)`.
+  A checkbox widens the list to every course for trial or drop-in lessons. The
+  check-in is still recorded, and the page warns that the student is not
+  enrolled.
+- **Today's Check-ins**: a live log of every check-in made today, newest first,
+  so the receptionist can see the check-in was saved.
+
+### How to Run
+```bash
+pip install -r requirements.txt     # or: pip install streamlit pandas
+streamlit run main.py
+```
+Run it from the project root. Streamlit opens the app in your browser at
+`http://localhost:8501`. Stop it with `Ctrl+C` in the terminal.
+
+### How to Test
+The GUI was tested by hand in the browser and with Streamlit's built-in test
+tool (`streamlit.testing.v1.AppTest`), which runs the app without a browser,
+fills in widgets and presses buttons. After each action, `data/msms.json` was
+checked.
+
+| Test | Steps | Expected result |
+| --- | --- | --- |
+| Search by name | Type `ali` | Only Alice Johnson listed |
+| Search by ID | Type `2` | Only Bob Williams listed |
+| No match | Type `zzz` | "No student matches 'zzz'." |
+| Register | Name `Carol Tan`, instrument ` piano ` | Success message, balloons; Carol (ID 3) appears in the table, enrolled in Beginner Piano; sidebar shows 3 students |
+| Unknown instrument | Instrument `Drums` | Error; `msms.json` unchanged (no half-created student) |
+| Blank field | Leave name empty | "Please enter both a name and an instrument." |
+| Roster | Pick Monday | Beginner Piano, 16:00, Room A, Dr. Evelyn Keys |
+| Empty day | Pick Sunday | "No lessons scheduled for Sunday." |
+| Check-in | Carol → Beginner Piano | Success; new row in Today's Check-ins and in `attendance` in the JSON |
+| Drop-in check-in | Tick the checkbox, Carol → Acoustic Guitar | Success plus a "not enrolled, recorded as a drop-in" warning |
+| Persistence | Close the browser tab, run the app again | Carol and her check-ins are still there |
+
+### Design Choices & Assumptions
+- **The GUI contains no business logic.** Rules such as "a student needs a
+  teacher for their instrument" live in `ScheduleManager`. The pages only check
+  that the boxes are not empty, then call a manager method. This is why the
+  console in PST3 could be swapped for a GUI without touching the models.
+- **One manager per browser session**, kept in `st.session_state`. This follows
+  PST3's "one `ScheduleManager` for the whole program" rule. Each change is still
+  saved to `data/msms.json` straight away, so nothing is lost if the tab closes.
+- **Registration validates before it changes anything**, like `switch_course`
+  in PST3. A failed registration never leaves a student with no course.
+- **Dropdowns show names but hold objects/IDs.** The template mapped
+  `{name: id}`, which would silently merge two students with the same name.
+  The dropdowns hold the objects themselves and display `"Name (ID n)"`.
+- **The check-in section is not an `st.form`.** Widgets inside a form do not
+  refresh until it is submitted, so the course list could not react to the
+  chosen student. Using plain widgets lets the course list show only that
+  student's courses, which stops most mistaken check-ins before they happen.
+- **Drop-ins are allowed but flagged.** PST3's `check_in` records a check-in for
+  a student who is not enrolled (for example a trial lesson), but warns. The
+  GUI keeps that behaviour and shows the warning on screen instead of only in
+  the terminal.
+- **The roster offers all seven days** (the template stopped at Friday). Music
+  schools often teach at weekends, and an empty day simply shows a message.
+- **The text console was retired**, as the brief asks that `main.py` only launch
+  the GUI. The PST3 console is still in the Git history (commit `8dfa507`).
+- **Payments** remains a stub page; it is scheduled for PST5.
+

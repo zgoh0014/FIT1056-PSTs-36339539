@@ -4,3 +4,7 @@ __pycache__/
 
 # Generated student ID badges (created at runtime by main.py option 18)
 *_card.txt
+
+# macOS junk that comes inside the unit's materials ZIPs
+.DS_Store
+__MACOSX/
