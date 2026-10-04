@@ -495,3 +495,12 @@ class ScheduleManager:
             student = self.find_student_by_id(int(query))
             return [student] if student else []
         return [s for s in self.students if query.lower() in s.name.lower()]
+
+    def get_attendance_for_date(self, date_str):
+        """Returns the attendance records for one date ("YYYY-MM-DD"), newest first.
+
+        Timestamps are stored as ISO strings (e.g. "2026-10-05T16:02:45"), so the
+        first 10 characters are the date.
+        """
+        records = [r for r in self.attendance_log if r.get("timestamp", "")[:10] == date_str]
+        return sorted(records, key=lambda r: r["timestamp"], reverse=True)

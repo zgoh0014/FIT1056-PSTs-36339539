@@ -8,6 +8,7 @@ import streamlit as st
 
 from app.schedule import ScheduleManager
 from gui.student_pages import show_student_management_page
+from gui.roster_pages import show_roster_page
 
 # The pages in the sidebar menu, in display order. Keeping them in one list
 # means the radio button and the if/elif below can never get out of step.
@@ -52,8 +53,7 @@ def launch():
     if page == "Student Management":
         show_student_management_page(manager)
     elif page == "Daily Roster":
-        st.header("Daily Roster")
-        st.info("Coming in Fragment 4.3.")
+        show_roster_page(manager)
     elif page == "Payments (stub)":
         st.header("Payments")
         st.warning("This feature will be implemented in PST5.")
