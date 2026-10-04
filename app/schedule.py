@@ -1,8 +1,10 @@
 # app/schedule.py - The Controller layer ("the brain" of the application).
 #
-# Everything that changes data goes through ScheduleManager. main.py (the View)
-# never touches the JSON file or the object lists directly - it only calls the
-# methods below. That separation is the whole point of the PST3 redesign.
+# Everything that changes data goes through ScheduleManager. The View (the
+# Streamlit GUI in gui/ since PST4) never touches the JSON file or changes the
+# object lists directly - it only calls the methods below. That separation is
+# the whole point of the PST3 redesign, and it is why PST4 could swap the text
+# console for a GUI without rewriting any business logic.
 
 import os
 import json
@@ -392,13 +394,71 @@ class ScheduleManager:
         return True
 
     # ------------------------------------------------------------------
-    # Read-only queries - these return data for main.py to format and print
+    # Front-desk registration (PST4 - called by the GUI's Register form)
+    # ------------------------------------------------------------------
+
+    def find_teacher_for_instrument(self, instrument):
+        """Returns the first teacher whose speciality matches the instrument, or None.
+
+        The comparison ignores case and surrounding spaces, so "piano", "Piano"
+        and " PIANO " all match a teacher whose speciality is "Piano".
+        """
+        wanted = instrument.strip().lower()
+        for teacher in self.teachers:
+            if teacher.speciality.strip().lower() == wanted:
+                return teacher
+        return None
+
+    def register_new_student(self, name, instrument):
+        """Registers a new student AND enrols them in a course for their instrument.
+
+        This is the one-step "walk-in registration" the receptionist uses.
+        Returns the new StudentUser, or None if registration was not possible.
+
+        Like switch_course, everything is validated BEFORE any data changes, so
+        a failed registration never leaves a half-created student in the file.
+        """
+        name = name.strip()
+        instrument = instrument.strip()
+        if not name or not instrument:
+            print("Error: Registration failed. Name and instrument are both required.")
+            return None
+
+        # 1. The school must have a teacher for this instrument.
+        teacher = self.find_teacher_for_instrument(instrument)
+        if not teacher:
+            print(f"Error: Registration failed. No teacher available for '{instrument}'.")
+            return None
+
+        # 2. Pick the course to put them in. Courses are kept in id order and the
+        #    lowest id for an instrument is its entry-level course (e.g. 101
+        #    "Beginner Piano" before 103 "Intermediate Piano"), which is the right
+        #    place for a brand-new student.
+        course = None
+        for c in self.courses:
+            if c.instrument.strip().lower() == instrument.lower():
+                course = c
+                break
+
+        # 3. Only now do we change data.
+        if course is None:
+            # A teacher exists but no course has been set up yet - open a beginner
+            # course with that teacher rather than turning the student away.
+            course = self.add_course(f"Beginner {teacher.speciality}", teacher.speciality, teacher.id)
+
+        student = self.add_student(name)
+        self.enrol_student(student.id, course.id)
+        print(f"Success: Registered {student.name} (ID {student.id}) into '{course.name}'.")
+        return student
+
+    # ------------------------------------------------------------------
+    # Read-only queries - these return data for the View (now the GUI) to display
     # ------------------------------------------------------------------
 
     def get_lessons_for_day(self, day):
         """Returns a list of (course, lesson) pairs happening on the given day.
 
-        The manager does the searching; main.py does the printing.
+        The manager does the searching; the View decides how to display it.
         """
         found = []
         for course in self.courses:
@@ -419,3 +479,19 @@ class ScheduleManager:
     def get_attendance_for_student(self, student_id):
         """Returns every attendance record belonging to one student."""
         return [r for r in self.attendance_log if r["student_id"] == student_id]
+
+    def search_students(self, query):
+        """Returns the students matching a search box entry.
+
+        - A blank query returns every student (the full directory).
+        - A number is treated as a student ID, e.g. "2".
+        - Anything else is a case-insensitive partial name match, e.g. "ali"
+          finds "Alice Johnson".
+        """
+        query = query.strip()
+        if not query:
+            return list(self.students)
+        if query.isdigit():
+            student = self.find_student_by_id(int(query))
+            return [student] if student else []
+        return [s for s in self.students if query.lower() in s.name.lower()]
