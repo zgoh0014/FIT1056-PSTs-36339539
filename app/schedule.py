@@ -5,9 +5,13 @@
 # object lists directly - it only calls the methods below. That separation is
 # the whole point of the PST3 redesign, and it is why PST4 could swap the text
 # console for a GUI without rewriting any business logic.
+#
+# PST5 adds the finance engine (payments + CSV reports).
 
 import os
+import csv
 import json
+import math
 import datetime
 
 from app.student import StudentUser
@@ -31,11 +35,15 @@ class ScheduleManager:
         # The attendance log stays a plain list of dictionaries - an attendance
         # record has no behaviour of its own, so it does not need a class.
         self.attendance_log = []
+        # PST5: every payment the front desk takes. Also a list of plain
+        # dictionaries, for the same reason as the attendance log.
+        self.finance_log = []
         # ID counters, so every new record gets a unique id.
         self.next_student_id = 1
         self.next_teacher_id = 1
         self.next_course_id = 101
         self.next_lesson_id = 1
+        self.next_payment_id = 1
         # Fill all of the above from the JSON file the moment the manager exists.
         self._load_data()
 
@@ -84,6 +92,9 @@ class ScheduleManager:
         # .get() with a default means an older msms.json without an "attendance"
         # key still loads instead of raising a KeyError.
         self.attendance_log = data.get("attendance", [])
+        # Same idea for the finance log: a PST4 data file has no "finance" key,
+        # so it loads as "no payments yet" instead of crashing.
+        self.finance_log = data.get("finance", [])
 
         # If the file has no saved counters, work them out from the highest id
         # already in use so we never hand out a duplicate id.
@@ -91,6 +102,10 @@ class ScheduleManager:
         self.next_teacher_id = data.get("next_teacher_id", self._next_id(self.teachers, 1))
         self.next_course_id = data.get("next_course_id", self._next_id(self.courses, 101))
         self.next_lesson_id = data.get("next_lesson_id", self._next_lesson_id())
+        self.next_payment_id = data.get(
+            "next_payment_id",
+            max((p.get("payment_id", 0) for p in self.finance_log), default=0) + 1,
+        )
 
     def _save_data(self):
         """Converts the object lists back into dictionaries and writes them to JSON."""
@@ -102,13 +117,23 @@ class ScheduleManager:
             "courses": [c.__dict__ for c in self.courses],
             # Already a list of plain dictionaries, so no conversion is needed.
             "attendance": self.attendance_log,
+            "finance": self.finance_log,
             "next_student_id": self.next_student_id,
             "next_teacher_id": self.next_teacher_id,
             "next_course_id": self.next_course_id,
             "next_lesson_id": self.next_lesson_id,
+            "next_payment_id": self.next_payment_id,
         }
-        with open(self.data_path, "w") as f:
+        # Crash-proof save: write to a temporary file first, then swap it into
+        # place in one step. If the program dies half-way through writing, the
+        # real msms.json is untouched instead of being left half-written.
+        folder = os.path.dirname(self.data_path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+        temp_path = self.data_path + ".tmp"
+        with open(temp_path, "w") as f:
             json.dump(data_to_save, f, indent=4)
+        os.replace(temp_path, self.data_path)
 
     # --- small private helpers used only while loading ---
 
@@ -249,6 +274,10 @@ class ScheduleManager:
         self._save_data()
         print(f"Success: Course '{name}' added with ID {course.id}.")
         return course
+
+    def create_course(self, name, instrument, teacher_id):
+        """Same as add_course - the name used by the PST5 test template."""
+        return self.add_course(name, instrument, teacher_id)
 
     def update_course(self, course_id, name=None, instrument=None, teacher_id=None):
         """Updates a course's details. Blank entries are ignored."""
@@ -504,3 +533,103 @@ class ScheduleManager:
         """
         records = [r for r in self.attendance_log if r.get("timestamp", "")[:10] == date_str]
         return sorted(records, key=lambda r: r["timestamp"], reverse=True)
+
+    # ------------------------------------------------------------------
+    # Finance & reporting (PST5 - Fragment 5.1)
+    # ------------------------------------------------------------------
+
+    def record_payment(self, student_id, amount, method):
+        """Adds a payment record to the finance log and saves it.
+
+        Returns the new payment dictionary, or None if the payment was rejected.
+        Everything is validated BEFORE the log is touched, so a bad entry can
+        never end up in the file.
+        """
+        # 1. The student must exist - money cannot be booked against nobody.
+        student = self.find_student_by_id(student_id)
+        if not student:
+            print(f"Error: Payment rejected. Student with ID {student_id} not found.")
+            return None
+
+        # 2. The amount must be a real, positive number. float() turns "50" or
+        #    50 into 50.0; anything that is not a number raises an error that we
+        #    catch here instead of letting it crash the program. NaN and
+        #    infinity are numbers to Python but not to an accountant.
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            print(f"Error: Payment rejected. '{amount}' is not a valid amount.")
+            return None
+        if math.isnan(amount) or math.isinf(amount) or amount <= 0:
+            print("Error: Payment rejected. The amount must be greater than zero.")
+            return None
+
+        # 3. The method must not be blank, otherwise the report is useless.
+        method = str(method).strip() if method is not None else ""
+        if not method:
+            print("Error: Payment rejected. Please enter a payment method.")
+            return None
+
+        # Money is stored to 2 decimal places (cents) so 0.1 + 0.2 style
+        # floating point noise never shows up on a receipt.
+        payment_record = {
+            "payment_id": self.next_payment_id,
+            "student_id": student_id,
+            "amount": round(amount, 2),
+            "method": method,
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+        }
+        self.finance_log.append(payment_record)
+        self.next_payment_id += 1
+        self._save_data()
+        print(f"Payment of {payment_record['amount']:.2f} for student {student_id} recorded.")
+        return payment_record
+
+    def get_payment_history(self, student_id):
+        """Returns a list of all payments for a given student, oldest first."""
+        return [p for p in self.finance_log if p.get("student_id") == student_id]
+
+    def get_total_paid(self, student_id):
+        """Returns the total a student has paid so far (0.0 if nothing)."""
+        return round(sum(p.get("amount", 0) for p in self.get_payment_history(student_id)), 2)
+
+    # Which list and which columns each report kind exports. Kept in one
+    # dictionary so adding a new report type is a one-line change.
+    REPORT_KINDS = {
+        "finance": ("finance_log", ["payment_id", "student_id", "amount", "method", "timestamp"]),
+        "attendance": ("attendance_log", ["student_id", "course_id", "timestamp"]),
+    }
+
+    def export_report(self, kind, out_path):
+        """Exports the finance or attendance log to a CSV file.
+
+        Returns the number of rows written, or None if the export failed
+        (unknown report type, or the file could not be written - e.g. it is
+        open in Excel on Windows).
+        """
+        print(f"Exporting {kind} report to {out_path}...")
+        if kind not in self.REPORT_KINDS:
+            print(f"Error: Unknown report type '{kind}'. Use one of: {', '.join(self.REPORT_KINDS)}.")
+            return None
+
+        list_name, headers = self.REPORT_KINDS[kind]
+        data_to_export = getattr(self, list_name)
+
+        try:
+            folder = os.path.dirname(out_path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            # newline="" stops Windows adding a blank line between rows.
+            # extrasaction="ignore" skips any extra keys a record may have, and
+            # restval="" fills in any missing ones, so an odd old record cannot
+            # break the whole export.
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore", restval="")
+                writer.writeheader()
+                writer.writerows(data_to_export)
+        except OSError as e:
+            print(f"Error: Could not write the report: {e}")
+            return None
+
+        print(f"Success: {len(data_to_export)} row(s) exported.")
+        return len(data_to_export)
