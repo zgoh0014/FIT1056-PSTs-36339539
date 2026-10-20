@@ -343,3 +343,179 @@ checked.
   the GUI. The PST3 console is still in the Git history (commit `8dfa507`).
 - **Payments** remains a stub page; it is scheduled for PST5.
 
+
+
+## PST5: The Quality & Finance Gate
+
+### Overview
+PST5 solves the "Fragile & Unverified" problem. Up to PST4 the app worked, but
+nothing proved it, nothing recorded what happened, there was no safety copy of
+the data, and the Payments page was a stub. PST5 adds:
+
+1. **A finance engine** - record payments, view a student's payment history,
+   and export the finance or attendance log to CSV (Fragment 5.1).
+2. **A real Payments page** in the GUI (Fragment 5.2).
+3. **Admin utilities** - an event log (`msms.log`) and timestamped backups of
+   `data/msms.json` (Fragment 5.3), wired into the app's start-up and key
+   business methods (Fragment 5.4).
+4. **An automated test suite** - 38 `pytest` tests (Fragment 5.5).
+5. **Crash-proofing** throughout (see the table at the end).
+
+| Layer | Files | Change in PST5 |
+| --- | --- | --- |
+| **Model** | `app/user.py`, `app/student.py`, `app/teacher.py` | None |
+| **Controller** | `app/schedule.py` | `finance_log`; `record_payment`, `get_payment_history`, `get_total_paid`, `export_report`, `cancel_lesson`, `create_course`; logging; crash-safe save |
+| **Admin** | `app/admin_utils.py` (new) | `init_logger`, `backup_data`, `list_backups` |
+| **View** | `gui/finance_pages.py` (new), `gui/main_dashboard.py`, `gui/roster_pages.py`, `main.py` | Payments page, Backup Now button, page error guard, Cancel a lesson, logging + backup on start-up |
+| **Tests** | `tests/` (new), `pytest.ini` | 38 automated tests |
+
+### Project Structure
+```
+FIT1056-PSTs-36339539/
+├── main.py                   # Launcher: logging + backup, then the GUI
+├── requirements.txt          # streamlit, pandas, pytest
+├── pytest.ini                # NEW: lets a plain "pytest" find app/ and tests/
+├── app/
+│   ├── user.py, student.py, teacher.py
+│   ├── schedule.py           # ScheduleManager (+ finance, reports, cancel_lesson, logging)
+│   └── admin_utils.py        # NEW: init_logger, backup_data
+├── gui/
+│   ├── main_dashboard.py     # Navigation, Backup Now, error guard
+│   ├── student_pages.py
+│   ├── roster_pages.py       # + Cancel a lesson
+│   └── finance_pages.py      # NEW: Finance & Payments page
+├── tests/                    # NEW
+│   ├── test_schedule_manager.py
+│   └── test_admin_utils.py
+├── data/
+│   ├── msms.json
+│   └── backups/              # created at run time (git-ignored)
+├── reports/                  # exported CSVs, created at run time (git-ignored)
+├── msms.log                  # event log, created at run time (git-ignored)
+└── PST2/ ... PST5/           # Brief, rubric and templates for each stage
+```
+
+### What Each Part Does
+
+**Fragment 5.1: Finance & Reporting Engine (`app/schedule.py`)**
+- `self.finance_log` is a list of payment dictionaries, loaded from and saved
+  to a new `"finance"` key in `msms.json`. An older PST4 file with no `"finance"`
+  key still loads (as "no payments yet").
+- `record_payment(student_id, amount, method)` checks the student exists, the
+  amount is a real number above zero (text such as `"abc"`, `0`, negatives,
+  NaN and infinity are all refused), and the method is not blank. Only then is a
+  record added:
+  `{"payment_id": 1, "student_id": 1, "amount": 150.0, "method": "Cash", "timestamp": "2026-10-20T15:44:06"}`.
+  It returns the record, or `None` if the payment was rejected.
+- `get_payment_history(student_id)` returns that student's payments (a list
+  comprehension over the log). `get_total_paid(student_id)` adds them up.
+- `export_report(kind, out_path)` writes the `"finance"` or `"attendance"` log to
+  a CSV with `csv.DictWriter`. It creates the output folder if needed and
+  returns the number of rows written. It returns `None` for an unknown report
+  type, or if the file cannot be written (for example, the CSV is open in Excel).
+
+**Fragment 5.2: Finance GUI (`gui/finance_pages.py`)**
+`show_finance_page(manager)` replaces the PST4 stub and has four sections:
+- **Record New Payment**: a form with a student dropdown, amount in RM, and a
+  payment-method dropdown (Cash, Credit Card, Debit Card, Bank Transfer,
+  E-wallet, or Other with a text box).
+- **View Student Payment History**: pick a student to see their payments, the
+  number of payments and the total paid.
+- **All Payments**: every payment, newest first, with total takings and
+  today's takings.
+- **Export Reports**: save the finance or attendance log as a CSV in `reports/`,
+  then download it from the page.
+
+**Fragment 5.3: Admin Utilities (`app/admin_utils.py`)**
+- `init_logger(log_file)` attaches a file handler to Python's root logger, using
+  the format `timestamp - LEVEL - message`, in append mode. Calling it twice does
+  not add a second handler, which matters because Streamlit re-runs `main.py`
+  on every click and would otherwise write each line many times.
+- `backup_data(data_path, backup_dir)` copies `msms.json` to
+  `data/backups/msms_backup_YYYY-MM-DD_HH-MM-SS.json`. It creates the folder if
+  needed and keeps only the newest 20 backups. It never raises: a failed backup
+  is logged and returns `None`, so it cannot stop the app from starting.
+
+**Fragment 5.4: Integrating Admin Utilities**
+- `main.py` calls `init_logger()` first, then `backup_data()`, then `launch()`.
+  The backup is taken **once per browser session** (guarded by
+  `st.session_state`), not on every click.
+- `app/schedule.py` logs every key business event: `INFO` for registrations,
+  payments, check-ins and exports, and `WARNING` for rejected input and lesson
+  cancellations. A corrupted data file is logged as `ERROR`.
+- `cancel_lesson(lesson_id, reason)` was added, because the brief logs it but
+  the class did not have it. It needs a reason, removes the lesson from the
+  timetable and logs a warning. The Daily Roster page has a **Cancel a lesson**
+  option with a required reason and a confirmation tick-box.
+- The sidebar has a **Backup Now** button and shows how many backups exist.
+
+**Fragment 5.5: Automated Test Suite (`tests/`)**
+Each test follows **Arrange, Act, Assert** and checks one thing. The fixtures
+build each test's own data file in pytest's `tmp_path`, so the tests **never
+touch the real `data/msms.json`** and do not affect each other.
+
+| Area | What is tested |
+| --- | --- |
+| Courses / lessons | create course; unknown teacher refused; cancel lesson; unknown lesson ID; blank reason refused |
+| Registration / check-in | enrols on both sides (case-insensitive instrument); unknown instrument leaves no half-created student; blank name; check-in recorded; bad IDs refused |
+| Payments | record + history (template test); empty history for a student who never paid; history only returns that student's payments; totals; unknown student; 6 invalid amounts (0, -50, "abc", None, NaN, inf); blank method; numeric string rounded to cents; unique, increasing payment IDs |
+| Persistence | payments survive a reload and IDs continue; an old PST4 file loads; a corrupted file does not crash; no `.tmp` file left after a save |
+| CSV export | finance columns and values; attendance; empty log writes header only; unknown kind writes nothing |
+| Admin utils | backup is an identical, timestamped copy; missing data file returns `None`; two quick backups do not overwrite; pruning keeps the newest N; payments and rejected payments appear in the log; `init_logger` twice does not duplicate lines |
+
+### How to Run
+```bash
+pip install -r requirements.txt
+streamlit run main.py          # or: python main.py
+```
+Run it from the project root. On start-up you will see `msms.log` created and
+a new file in `data/backups/`.
+
+### How to Test
+```bash
+pytest
+```
+`pytest.ini` points pytest at `tests/` and puts the project root on the
+import path, so no other set-up is needed. Expected output: **38 passed**.
+
+The GUI was also checked by hand and with Streamlit's `AppTest`. Results:
+recording a RM 150 payment updated the history, totals and `msms.json`;
+choosing "Other" with no text showed a warning; exporting created a CSV in
+`reports/`; Backup Now added a backup; cancelling Monday's lesson removed it
+from the roster and wrote a `WARNING` line with the reason to `msms.log`; many
+clicks produced only one start-up backup.
+
+### Design Choices & Assumptions
+- **Validate before mutate (again).** `record_payment` follows the same rule as
+  `register_new_student` and `switch_course`: every check runs before the log
+  changes, so a bad payment never reaches the file. The GUI checks too
+  (`min_value=0.01`), but the manager does not trust the GUI, which is why the
+  tests can call it with bad input directly.
+- **Payments get a `payment_id`.** The template record had no ID, so two equal
+  payments on the same day could not be told apart, for example on a receipt.
+  The counter is saved like the other `next_*_id` counters.
+- **Money is stored rounded to 2 decimal places**, so floating-point noise
+  (`0.1 + 0.2 = 0.30000000000000004`) never appears. The currency is RM.
+- **Payments are kept when a student is removed**, like attendance records.
+  Financial history should not disappear, so the GUI shows "Student #n (removed)".
+- **`export_report` uses a lookup table** (`REPORT_KINDS`) instead of a long
+  if/elif, so a new report type is a one-line change.
+- **Cancelling a lesson removes it from the timetable.** The assumption is that
+  "cancel" means the timeslot is no longer running. The reason is kept in the
+  log as the audit trail.
+- **`create_course`** is a thin alias for `add_course`, because the template test
+  uses that name. Unlike the template, the test adds a teacher first, since a
+  course for a teacher who does not exist is correctly refused.
+
+**Crash-proofing summary**
+
+| Risk | Protection |
+| --- | --- |
+| App killed while saving | `_save_data` writes `msms.json.tmp` then `os.replace`s it, so `msms.json` is never half-written |
+| Corrupted / missing data file | Starts with a clean state and logs an error instead of crashing |
+| Older data file (PST4) | Missing keys default via `.get()` |
+| Bad payment input | Rejected with a message; never stored |
+| Report file locked or folder missing | Folder created; write errors caught and shown in the GUI |
+| Backup fails | Logged, returns `None`; the app still starts |
+| Unexpected error on any page | Caught in `main_dashboard.py`, full traceback written to `msms.log`, friendly message shown; Streamlit's own rerun signal is let through |
+| Backup folder filling up | Only the newest 20 backups are kept |
