@@ -6,12 +6,14 @@
 # the whole point of the PST3 redesign, and it is why PST4 could swap the text
 # console for a GUI without rewriting any business logic.
 #
-# PST5 adds the finance engine (payments + CSV reports).
+# PST5 adds the finance engine (payments + CSV reports), cancel_lesson, and
+# logging of every important business event (see app/admin_utils.py).
 
 import os
 import csv
 import json
 import math
+import logging
 import datetime
 
 from app.student import StudentUser
@@ -62,6 +64,7 @@ class ScheduleManager:
         except json.JSONDecodeError:
             # A corrupted file should not crash the whole program.
             print("Data file is not valid JSON. Starting with a clean state.")
+            logging.error(f"Data file {self.data_path} is not valid JSON - started with a clean state.")
             return
 
         # Rebuild each student dictionary into a StudentUser object.
@@ -330,6 +333,33 @@ class ScheduleManager:
         print(f"Success: Lesson added to '{course.name}' on {day} at {start_time}.")
         return True
 
+    def cancel_lesson(self, lesson_id, reason):
+        """Removes a timetabled lesson from its course (PST5).
+
+        The reason is required because a cancellation affects students and
+        teachers - it is written to the log so the school can see later why a
+        class disappeared from the roster.
+        """
+        reason = str(reason).strip()
+        if not reason:
+            print("Error: Please give a reason for cancelling the lesson.")
+            return False
+        for course in self.courses:
+            for lesson in course.lessons:
+                if lesson.get("lesson_id") == lesson_id:
+                    course.lessons.remove(lesson)
+                    self._save_data()
+                    print(f"Success: Lesson {lesson_id} of '{course.name}' cancelled.")
+                    # WARNING rather than INFO: a cancellation is something an
+                    # administrator may need to follow up on.
+                    logging.warning(
+                        f"Lesson ID {lesson_id} ({course.name}, {lesson.get('day')} "
+                        f"{lesson.get('start_time')}) was cancelled. Reason: {reason}"
+                    )
+                    return True
+        print(f"Error: Lesson with ID {lesson_id} not found.")
+        return False
+
     # ------------------------------------------------------------------
     # Enrolment
     # ------------------------------------------------------------------
@@ -420,6 +450,7 @@ class ScheduleManager:
         self.attendance_log.append(check_in_record)
         self._save_data()
         print(f"Success: Student {student.name} checked into {course.name}.")
+        logging.info(f"Check-in: student ID {student_id} ({student.name}) into course ID {course_id} ({course.name}).")
         return True
 
     # ------------------------------------------------------------------
@@ -451,12 +482,14 @@ class ScheduleManager:
         instrument = instrument.strip()
         if not name or not instrument:
             print("Error: Registration failed. Name and instrument are both required.")
+            logging.warning("Registration rejected: name or instrument was blank.")
             return None
 
         # 1. The school must have a teacher for this instrument.
         teacher = self.find_teacher_for_instrument(instrument)
         if not teacher:
             print(f"Error: Registration failed. No teacher available for '{instrument}'.")
+            logging.warning(f"Registration of '{name}' rejected: no teacher for '{instrument}'.")
             return None
 
         # 2. Pick the course to put them in. Courses are kept in id order and the
@@ -478,6 +511,7 @@ class ScheduleManager:
         student = self.add_student(name)
         self.enrol_student(student.id, course.id)
         print(f"Success: Registered {student.name} (ID {student.id}) into '{course.name}'.")
+        logging.info(f"New student registered: {student.name} (ID {student.id}) into '{course.name}' (ID {course.id}).")
         return student
 
     # ------------------------------------------------------------------
@@ -549,6 +583,7 @@ class ScheduleManager:
         student = self.find_student_by_id(student_id)
         if not student:
             print(f"Error: Payment rejected. Student with ID {student_id} not found.")
+            logging.warning(f"Payment rejected: student ID {student_id} not found.")
             return None
 
         # 2. The amount must be a real, positive number. float() turns "50" or
@@ -559,15 +594,18 @@ class ScheduleManager:
             amount = float(amount)
         except (TypeError, ValueError):
             print(f"Error: Payment rejected. '{amount}' is not a valid amount.")
+            logging.warning(f"Payment rejected for student ID {student_id}: invalid amount {amount!r}.")
             return None
         if math.isnan(amount) or math.isinf(amount) or amount <= 0:
             print("Error: Payment rejected. The amount must be greater than zero.")
+            logging.warning(f"Payment rejected for student ID {student_id}: amount {amount} is not positive.")
             return None
 
         # 3. The method must not be blank, otherwise the report is useless.
         method = str(method).strip() if method is not None else ""
         if not method:
             print("Error: Payment rejected. Please enter a payment method.")
+            logging.warning(f"Payment rejected for student ID {student_id}: no payment method given.")
             return None
 
         # Money is stored to 2 decimal places (cents) so 0.1 + 0.2 style
@@ -583,6 +621,10 @@ class ScheduleManager:
         self.next_payment_id += 1
         self._save_data()
         print(f"Payment of {payment_record['amount']:.2f} for student {student_id} recorded.")
+        logging.info(
+            f"Payment #{payment_record['payment_id']} of {payment_record['amount']:.2f} "
+            f"({method}) recorded for student ID {student_id} ({student.name})."
+        )
         return payment_record
 
     def get_payment_history(self, student_id):
@@ -610,6 +652,7 @@ class ScheduleManager:
         print(f"Exporting {kind} report to {out_path}...")
         if kind not in self.REPORT_KINDS:
             print(f"Error: Unknown report type '{kind}'. Use one of: {', '.join(self.REPORT_KINDS)}.")
+            logging.warning(f"Export rejected: unknown report type '{kind}'.")
             return None
 
         list_name, headers = self.REPORT_KINDS[kind]
@@ -629,7 +672,9 @@ class ScheduleManager:
                 writer.writerows(data_to_export)
         except OSError as e:
             print(f"Error: Could not write the report: {e}")
+            logging.error(f"Export of {kind} report to {out_path} failed: {e}")
             return None
 
         print(f"Success: {len(data_to_export)} row(s) exported.")
+        logging.info(f"Exported {kind} report ({len(data_to_export)} rows) to {out_path}.")
         return len(data_to_export)

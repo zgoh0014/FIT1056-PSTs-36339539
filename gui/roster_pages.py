@@ -1,7 +1,8 @@
 # gui/roster_pages.py - The Daily Roster & Check-in page (Fragment 4.3).
 #
 # Three sections for the front desk:
-#   1. Daily Roster       - a timetable of every lesson on the chosen day.
+#   1. Daily Roster       - a timetable of every lesson on the chosen day
+#                           (PST5: plus a "Cancel a lesson" option).
 #   2. Student Check-in   - record that a student has arrived for a course.
 #   3. Today's Check-ins  - a live log, so the receptionist can confirm it worked.
 #
@@ -61,6 +62,37 @@ def _show_roster_section(manager):
     col1.metric(f"Lessons on {day}", len(rows))
     col2.metric("Students expected", sum(r["Students Enrolled"] for r in rows))
     st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+    _show_cancel_lesson(manager, lessons)
+
+
+def _show_cancel_lesson(manager, lessons):
+    """PST5: cancel one of the day's lessons. The reason goes to msms.log."""
+    # Tucked in an expander so it is not clicked by accident.
+    with st.expander("Cancel a lesson"):
+        with st.form("cancel_lesson_form", clear_on_submit=True):
+            choice = st.selectbox(
+                "Lesson to cancel",
+                lessons,
+                format_func=lambda pair: (
+                    f"{pair[1].get('start_time', '--:--')} - {pair[0].name} "
+                    f"({pair[1].get('room', '-')}, lesson #{pair[1].get('lesson_id')})"
+                ),
+            )
+            reason = st.text_input("Reason (required)", placeholder="e.g. Teacher unwell")
+            confirm = st.checkbox("Yes, remove this lesson from the timetable")
+            submitted = st.form_submit_button("Cancel Lesson")
+
+        if submitted:
+            if not confirm:
+                st.warning("Tick the confirmation box to cancel the lesson.")
+            elif not reason.strip():
+                st.warning("Please give a reason for the cancellation.")
+            elif manager.cancel_lesson(choice[1].get("lesson_id"), reason):
+                st.success("Lesson cancelled.")
+                st.rerun()  # redraw the roster without it
+            else:
+                st.error("That lesson could not be found - it may already have been cancelled.")
 
 
 # ----------------------------------------------------------------------
