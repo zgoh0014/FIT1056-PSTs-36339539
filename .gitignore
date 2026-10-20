@@ -8,3 +8,10 @@ __pycache__/
 # macOS junk that comes inside the unit's materials ZIPs
 .DS_Store
 __MACOSX/
+
+# PST5 run-time output (created when the app runs - not source code)
+msms.log
+data/backups/
+data/*.tmp
+reports/
+.pytest_cache/
