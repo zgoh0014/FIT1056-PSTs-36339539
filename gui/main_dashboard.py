@@ -3,16 +3,19 @@
 # launch() is called by main.py. It sets up the page, makes sure there is
 # exactly ONE ScheduleManager for the whole session, draws the sidebar menu,
 # and hands the manager to whichever page the receptionist picked.
+#
+# PST5: the Payments stub is replaced by the real Finance page.
 
 import streamlit as st
 
 from app.schedule import ScheduleManager
 from gui.student_pages import show_student_management_page
 from gui.roster_pages import show_roster_page
+from gui.finance_pages import show_finance_page
 
 # The pages in the sidebar menu, in display order. Keeping them in one list
 # means the radio button and the if/elif below can never get out of step.
-PAGES = ["Student Management", "Daily Roster", "Payments (stub)"]
+PAGES = ["Student Management", "Daily Roster", "Payments"]
 
 
 def launch():
@@ -54,6 +57,5 @@ def launch():
         show_student_management_page(manager)
     elif page == "Daily Roster":
         show_roster_page(manager)
-    elif page == "Payments (stub)":
-        st.header("Payments")
-        st.warning("This feature will be implemented in PST5.")
+    elif page == "Payments":
+        show_finance_page(manager)
